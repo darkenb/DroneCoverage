@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>BUG_DroneCoverage</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <!-- Override for your install: dotnet build -c Release "-p:DSPGamePath=..." "-p:BepInExCorePath=..." -->
+    <DSPGamePath Condition="'$(DSPGamePath)' == ''">D:\Games\Dyson Sphere Program</DSPGamePath>
+    <BepInExCorePath Condition="'$(BepInExCorePath)' == ''">$(APPDATA)\com.kesomannen.gale\dyson-sphere-program\profiles\Default\BepInEx\core</BepInExCorePath>
+    <ManagedPath>$(DSPGamePath)\DSPGAME_Data\Managed</ManagedPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="$(ManagedPath)\Assembly-CSharp.dll" Private="false" />
+    <Reference Include="$(ManagedPath)\UnityEngine*.dll" Private="false" />
+    <Reference Include="$(BepInExCorePath)\BepInEx.dll" Private="false" />
+    <Reference Include="$(BepInExCorePath)\0Harmony.dll" Private="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Upgrade icons, loaded by file name -->
+    <EmbeddedResource Include="icons\*.png" LogicalName="%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>
