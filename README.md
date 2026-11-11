@@ -23,7 +23,6 @@ Set `ResetResearch` (section `Reset` in `bug.dsp.dronecoverage.cfg`, editable in
 ## Notes
 
 - Planet-wide searches walk every object on the planet. They only run when the drones look for new work, but on very large factories the first stage-10 search can take a few milliseconds.
-- Versions 1.0.x write `[Diag]` lines to the BepInEx log for testing.
 
 ## Building from source
 

@@ -1,6 +1,6 @@
 {
     "name": "BUG_DroneCoverage",
-    "version_number": "1.0.1",
+    "version_number": "1.0.2",
     "website_url": "https://github.com/darkenb/DroneCoverage",
     "description": "Ten upgrade stages that widen the area construction and repair drones cover, for the mecha and battlefield analysis bases. Stage 10 covers the whole planet.",
     "dependencies": [

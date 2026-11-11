@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.IO;
@@ -10,9 +9,13 @@ using BepInEx.Logging;
 using HarmonyLib;
 using UnityEngine;
 
+[assembly: AssemblyVersion("1.0.2.0")]
+[assembly: AssemblyFileVersion("1.0.2.0")]
+[assembly: AssemblyInformationalVersion("1.0.2")]
+
 namespace DroneCoverage
 {
-    [BepInPlugin(Guid, "BUG_DroneCoverage", "1.0.1")]
+    [BepInPlugin(Guid, "BUG_DroneCoverage", "1.0.2")]
     public class Plugin : BaseUnityPlugin
     {
         public const string Guid = "bug.dsp.dronecoverage";
@@ -28,7 +31,6 @@ namespace DroneCoverage
                 "Set to true to reset the Drone Coverage upgrades of the running (or next loaded) game to stage 0, so they can be researched again. Spent cubes are not refunded. Turns itself back off.");
             cfgTime = CfgTime();
             new Harmony(Guid).PatchAll(typeof(Coverage));
-            Coverage.Diag("loaded, patches applied, ResetResearch=" + reset.Value);
         }
 
         DateTime CfgTime()
@@ -46,7 +48,6 @@ namespace DroneCoverage
             {
                 cfgTime = t;
                 Config.Reload();
-                Coverage.Diag("config file changed, reloaded: ResetResearch=" + reset.Value);
             }
             if (reset.Value && GameMain.history != null)
             {
@@ -54,7 +55,6 @@ namespace DroneCoverage
                 reset.Value = false;  // saves the file
                 cfgTime = CfgTime();
             }
-            if (appliedFor != GameMain.data) Coverage.Diag("new or loaded game, applying coverage");
             Coverage.Dirty = false;
             appliedFor = GameMain.data;
             Coverage.Apply();
@@ -79,20 +79,6 @@ namespace DroneCoverage
         internal static ManualLogSource Log;
         public static TechProto[] Tiers;  // null until the tech table is built
         public static volatile bool Dirty;  // labs unlock on worker threads; ranges are applied on the main thread
-
-        // TEMP diagnostics for live testing: every line starts with [Diag] so it is easy to grep and to strip later.
-        internal static void Diag(string msg) => Log?.LogInfo("[Diag] " + msg);
-        static readonly Dictionary<string, long> lastDiag = new Dictionary<string, long>();
-        static void DiagEvery(string key, int seconds, string msg)  // rate-limited, for per-tick paths
-        {
-            long now = Stopwatch.GetTimestamp();
-            lock (lastDiag)
-            {
-                if (lastDiag.TryGetValue(key, out long t) && now - t < seconds * Stopwatch.Frequency) return;
-                lastDiag[key] = now;
-            }
-            Diag(msg);
-        }
 
         public static float Range(float baseRange, int stage)
         {
@@ -141,14 +127,10 @@ namespace DroneCoverage
         public class Scaled { public float Base = -1f, Set = -1f; }
         static readonly ConditionalWeakTable<object, Scaled> scaled = new ConditionalWeakTable<object, Scaled>();
 
-        public static float Raise(object owner, float current, int stage, string what)
+        public static float Raise(object owner, float current, int stage)
         {
             var s = scaled.GetOrCreateValue(owner);
-            if (s.Set < 0f || current != s.Set)
-            {
-                if (s.Set >= 0f) Diag(what + ": range changed outside this mod " + s.Set + " -> " + current + ", taken as new base");
-                s.Base = current;
-            }
+            if (s.Set < 0f || current != s.Set) s.Base = current;  // first sight, or changed outside this mod
             s.Set = Range(s.Base, stage);
             return s.Set;
         }
@@ -178,22 +160,16 @@ namespace DroneCoverage
             Log?.LogInfo("Drone Coverage research reset: stage " + before + " -> " + Stage);
         }
 
-        static int lastStage = -1;
-
         public static void Apply()
         {
             int stage = Stage;
-            if (stage != lastStage) Diag("stage " + lastStage + " -> " + stage + (Tiers == null ? " (techs not registered)" : ""));
-            lastStage = stage;
-
             var player = GameMain.mainPlayer;
             var mecha = player?.mecha;
             if (mecha != null)
             {
-                float want = Raise(mecha, mecha.buildArea, stage, "mecha");
+                float want = Raise(mecha, mecha.buildArea, stage);
                 if (want != mecha.buildArea)
                 {
-                    Diag("mecha build area " + mecha.buildArea + " -> " + want + " (stage " + stage + ")");
                     mecha.buildArea = want;
                     if (mecha.constructionModule != null) mecha.constructionModule.prebuildDistribution = null;  // sized by range on first use
                     mecha.buildLastSearchAstroId = 0;  // the drones search again at once with the new range
@@ -204,7 +180,6 @@ namespace DroneCoverage
 
             var data = GameMain.data;
             if (data?.factories == null) return;
-            int seen = 0, changed = 0;
             for (int f = 0; f < data.factoryCount; f++)
             {
                 var cs = data.factories[f]?.constructionSystem;
@@ -214,16 +189,12 @@ namespace DroneCoverage
                 {
                     var m = pool.buffer[i];
                     if (m == null || m.id != i || m.entityId <= 0) continue;
-                    seen++;
-                    float want = Raise(m, m.baseBuildRange, stage, "base module " + data.factories[f].planetId + "/" + i);
+                    float want = Raise(m, m.baseBuildRange, stage);
                     if (want == m.baseBuildRange) continue;
-                    Diag("battle base on planet " + data.factories[f].planetId + " module " + i + " range " + m.baseBuildRange + " -> " + want);
                     m.baseBuildRange = want;
                     m.prebuildDistribution = null;
-                    changed++;
                 }
             }
-            if (changed > 0) Diag("battle bases: " + changed + " of " + seen + " modules updated");
         }
 
         // ---- Saves keep the base range ----
@@ -233,7 +204,6 @@ namespace DroneCoverage
         {
             __state = -1f;
             if (!SavedBase(__instance, __instance.buildArea, out float b)) return;
-            Diag("save: mecha build area written as base " + b + " (live " + __instance.buildArea + ")");
             __state = __instance.buildArea;
             __instance.buildArea = b;
         }
@@ -249,7 +219,6 @@ namespace DroneCoverage
         {
             __state = -1f;
             if (!SavedBase(__instance, __instance.baseBuildRange, out float b)) return;
-            DiagEvery("export-module", 5, "save: battle base ranges written as base (e.g. " + b + ", live " + __instance.baseBuildRange + ")");
             __state = __instance.baseBuildRange;
             __instance.baseBuildRange = b;
         }
@@ -261,19 +230,13 @@ namespace DroneCoverage
         }
 
         [HarmonyPostfix, HarmonyPatch(typeof(GameHistoryData), nameof(GameHistoryData.NotifyTechUnlock))]
-        static void Unlocked(int _techId)
-        {
-            if (Tiers != null && _techId > Base && _techId <= Base + Tiers.Length) Diag("tech " + _techId + " unlocked");
-            Dirty = true;
-        }
+        static void Unlocked() => Dirty = true;
 
         // ---- Searches past the hash's 32 nearest buckets ----
         // The drones find targets through HashSystem, which hands out at most the 32 buckets nearest to the centre.
         // A wider range would be cut there, so inside the drone searches any range those 32 cannot cover walks every bucket.
 
         [ThreadStatic] static int searching;
-        [ThreadStatic] static long searchStart;
-        [ThreadStatic] static bool searchWide;
 
         [HarmonyPrefix]
         [HarmonyPatch(typeof(ConstructionModuleComponent), nameof(ConstructionModuleComponent.SearchBuildTargets))]
@@ -281,10 +244,7 @@ namespace DroneCoverage
         [HarmonyPatch(typeof(ConstructionModuleComponent), nameof(ConstructionModuleComponent.SearchAutoReconstructTargets))]
         [HarmonyPatch(typeof(ConstructionModuleComponent), nameof(ConstructionModuleComponent.AutoReconstructAllInstantly))]
         [HarmonyPatch(typeof(ConstructionModuleComponent), "PlaceItems")]
-        static void SearchEnter()
-        {
-            if (searching++ == 0) { searchStart = Stopwatch.GetTimestamp(); searchWide = false; }
-        }
+        static void SearchEnter() => searching++;
 
         [HarmonyFinalizer]
         [HarmonyPatch(typeof(ConstructionModuleComponent), nameof(ConstructionModuleComponent.SearchBuildTargets))]
@@ -292,14 +252,7 @@ namespace DroneCoverage
         [HarmonyPatch(typeof(ConstructionModuleComponent), nameof(ConstructionModuleComponent.SearchAutoReconstructTargets))]
         [HarmonyPatch(typeof(ConstructionModuleComponent), nameof(ConstructionModuleComponent.AutoReconstructAllInstantly))]
         [HarmonyPatch(typeof(ConstructionModuleComponent), "PlaceItems")]
-        static void SearchLeave(ConstructionModuleComponent __instance, MethodBase __originalMethod, Exception __exception)
-        {
-            if (__exception != null) Log?.LogError("[Diag] " + __originalMethod?.Name + " threw: " + __exception);
-            if (--searching != 0 || !searchWide) return;
-            double ms = (Stopwatch.GetTimestamp() - searchStart) * 1000.0 / Stopwatch.Frequency;
-            DiagEvery("wide-" + __originalMethod?.Name + (__instance.entityId == 0 ? "-mecha" : "-base"), 10,
-                "wide " + __originalMethod?.Name + " by " + (__instance.entityId == 0 ? "mecha" : "base entity " + __instance.entityId) + " took " + ms.ToString("0.00") + " ms");
-        }
+        static void SearchLeave() => searching--;
 
         [HarmonyPrefix, HarmonyPatch(typeof(HashSystem), nameof(HashSystem.GetBucketIdxesInArea), typeof(Vector3), typeof(float))]
         static bool AllBuckets(HashSystem __instance, Vector3 center, float areaRadius)
@@ -311,8 +264,6 @@ namespace DroneCoverage
             if (active == null || active.Length < n) return true;
             for (int i = 0; i < n; i++) active[i] = i;
             __instance.activeBucketsCount = n;
-            searchWide = true;
-            DiagEvery("allbuckets", 10, "range " + areaRadius + " m is past the 32 nearest hash buckets, walking all " + n + " buckets");
             return false;
         }
 
@@ -351,7 +302,6 @@ namespace DroneCoverage
                 }
             int pre = MechaDroneTech();
             Layout(set.dataArray, out float x0, out float dx, out float y0);
-            Diag("tech layout: x0 " + x0 + " dx " + dx + " y " + y0 + ", opens after tech " + pre + ", " + set.dataArray.Length + " techs before");
             var tiers = new TechProto[ranges.Count];
             for (int t = 0; t < ranges.Count; t++)
             {
@@ -404,7 +354,6 @@ namespace DroneCoverage
             foreach (var p in tiers) p.Preload();
             foreach (var p in tiers) { p.Preload2(); Traverse.Create(p).Field("_iconSprite").SetValue(sprite); }
             Tiers = tiers;
-            foreach (var p in tiers) Diag("tech " + p.ID + " stages " + p.Level + "-" + p.MaxLevel + " cubes " + p.Items.Length + " page " + p.page + " pos " + p.Position);
             Log?.LogInfo("Added " + tiers.Length + " drone coverage upgrade techs (ids " + tiers[0].ID + "-" + tiers[tiers.Length - 1].ID + ")" + (sprite == null ? ", icon missing" : ""));
         }
 
